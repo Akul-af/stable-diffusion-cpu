@@ -1,98 +1,66 @@
 @echo off
+REM #################################################
+REM CPU-only install script for Stable Diffusion WebUI
+REM Optimized for lightweight environments + TCMalloc
+REM #################################################
 
-if exist webui.settings.bat (
-    call webui.settings.bat
+setlocal enabledelayedexpansion
+
+set SCRIPT_DIR=%~dp0
+set INSTALL_DIR=%SCRIPT_DIR%
+set CLONE_DIR=stable-diffusion-webui
+set PYTHON_CMD=python
+set VENV_DIR=venv
+set LAUNCH_SCRIPT=launch.py
+
+echo #################################################
+echo CPU-only Install Script for Stable Diffusion WebUI
+echo #################################################
+
+REM Check prerequisites
+where git >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: git is not installed, aborting...
+    exit /b 1
 )
 
-if not defined PYTHON (set PYTHON=python)
-if defined GIT (set "GIT_PYTHON_GIT_EXECUTABLE=%GIT%")
-if not defined VENV_DIR (set "VENV_DIR=%~dp0%venv")
+where %PYTHON_CMD% >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Python is not installed, aborting...
+    exit /b 1
+)
 
-set SD_WEBUI_RESTART=tmp/restart
-set ERROR_REPORTING=FALSE
+REM Clone repo if missings
+if not exist "%INSTALL_DIR%\%CLONE_DIR%" (
+    echo Cloning Stable Diffusion WebUI repo...
+    git clone https://github.com/Akul-af/stable-diffusion-cpu.git "%CLONE_DIR%"
+)
 
-mkdir tmp 2>NUL
+cd "%INSTALL_DIR%\%CLONE_DIR%" || exit /b 1
 
-%PYTHON% -c "" >tmp/stdout.txt 2>tmp/stderr.txt
-if %ERRORLEVEL% == 0 goto :check_pip
-echo Couldn't launch python
-goto :show_stdout_stderr
+REM Create venv if missing
+if not exist "%VENV_DIR%" (
+    echo Creating Python venv...
+    %PYTHON_CMD% -m venv %VENV_DIR%
+    call "%VENV_DIR%\Scripts\activate.bat"
+    python -m pip install --upgrade pip
+) else (
+    call "%VENV_DIR%\Scripts\activate.bat"
+)
 
-:check_pip
-%PYTHON% -mpip --help >tmp/stdout.txt 2>tmp/stderr.txt
-if %ERRORLEVEL% == 0 goto :start_venv
-if "%PIP_INSTALLER_LOCATION%" == "" goto :show_stdout_stderr
-%PYTHON% "%PIP_INSTALLER_LOCATION%" >tmp/stdout.txt 2>tmp/stderr.txt
-if %ERRORLEVEL% == 0 goto :start_venv
-echo Couldn't install pip
-goto :show_stdout_stderr
+REM Install CPU-only PyTorch wheels
+echo Installing CPU-only PyTorch...
+pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 
-:start_venv
-if ["%VENV_DIR%"] == ["-"] goto :skip_venv
-if ["%SKIP_VENV%"] == ["1"] goto :skip_venv
+REM Install other requirements
+echo Installing project requirements...
+pip install -r requirements-cpu.txt
 
-dir "%VENV_DIR%\Scripts\Python.exe" >tmp/stdout.txt 2>tmp/stderr.txt
-if %ERRORLEVEL% == 0 goto :activate_venv
+REM Prepare TCMalloc (Windows note)
+REM On Windows, TCMalloc is not commonly available.
+REM If you have installed Google Perftools manually, set PATH to include it.
+REM Example:
+REM set PATH=%PATH%;C:\path\to\tcmalloc
 
-for /f "delims=" %%i in ('CALL %PYTHON% -c "import sys; print(sys.executable)"') do set PYTHON_FULLNAME="%%i"
-echo Creating venv in directory %VENV_DIR% using python %PYTHON_FULLNAME%
-%PYTHON_FULLNAME% -m venv "%VENV_DIR%" >tmp/stdout.txt 2>tmp/stderr.txt
-if %ERRORLEVEL% == 0 goto :upgrade_pip
-echo Unable to create venv in directory "%VENV_DIR%"
-goto :show_stdout_stderr
-
-:upgrade_pip
-"%VENV_DIR%\Scripts\Python.exe" -m pip install --upgrade pip
-if %ERRORLEVEL% == 0 goto :activate_venv
-echo Warning: Failed to upgrade PIP version
-
-:activate_venv
-set PYTHON="%VENV_DIR%\Scripts\Python.exe"
-call "%VENV_DIR%\Scripts\activate.bat"
-echo venv %PYTHON%
-
-:skip_venv
-if [%ACCELERATE%] == ["True"] goto :accelerate
-goto :launch
-
-:accelerate
-echo Checking for accelerate
-set ACCELERATE="%VENV_DIR%\Scripts\accelerate.exe"
-if EXIST %ACCELERATE% goto :accelerate_launch
-
-:launch
-%PYTHON% launch.py %*
-if EXIST tmp/restart goto :skip_venv
-pause
-exit /b
-
-:accelerate_launch
-echo Accelerating
-%ACCELERATE% launch --num_cpu_threads_per_process=6 launch.py
-if EXIST tmp/restart goto :skip_venv
-pause
-exit /b
-
-:show_stdout_stderr
-
-echo.
-echo exit code: %errorlevel%
-
-for /f %%i in ("tmp\stdout.txt") do set size=%%~zi
-if %size% equ 0 goto :show_stderr
-echo.
-echo stdout:
-type tmp\stdout.txt
-
-:show_stderr
-for /f %%i in ("tmp\stderr.txt") do set size=%%~zi
-if %size% equ 0 goto :show_stderr
-echo.
-echo stderr:
-type tmp\stderr.txt
-
-:endofscript
-
-echo.
-echo Launch unsuccessful. Exiting.
-pause
+echo Launching WebUI...
+python %LAUNCH_SCRIPT% %*
